@@ -23,6 +23,7 @@ if (!in_array(get_current_user_role_id(), $allowed_roles)) {
 
 $success_message = '';
 $error_message = '';
+$current_purchase_order_view = null; // Variable pour stocker les données d'une commande si on visualise/modifie/reçoit
 
 // Gérer les messages de succès/erreur passés via l'URL (après redirection)
 if (isset($_GET['success'])) {
@@ -32,20 +33,8 @@ if (isset($_GET['error'])) {
     $error_message = htmlspecialchars($_GET['error']);
 }
 
-
-// --- Nouveau bloc pour gérer le succès de la commande et le lien facture ---
-// Ce bloc vient APRÈS les vérifications précédentes pour ne pas être écrasé
-if (isset($_GET['success_purchase_order_id'])) {
-    $purchase_order_id_for_link = filter_var($_GET['success_purchase_order_id'], FILTER_VALIDATE_INT);
-    if ($purchase_order_id_for_link !== false) {
-        $success_message = "Commande n°" . htmlspecialchars($purchase_order_id_for_link) . " finalisée avec succès ! "
-                         . '<a href="generate_po_pdf.php?purchase_order_id=' . htmlspecialchars($purchase_order_id_for_link) . '" target="_blank" class="alert-link btn btn-success text-light">Générer le bon de commande PDF</a>';
-    } else {
-         $error_message = "Commande finalisée, mais ID de Commande invalide pour générer la facture.";
-    }
-}
-
-// --- Gérer l'ajout d'un produit à la commande (Panier Session) ---
+// --- Gérer l'ajout d'un produit à la commande (Panier Session - Code précédent ici) ---
+// ... (Conservez le bloc de code pour l'ajout au panier tel quel) ...
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_po_cart'])) {
     $product_id = filter_var($_POST['product_id'] ?? '', FILTER_VALIDATE_INT);
     $quantity = filter_var($_POST['quantity'] ?? '', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -54,7 +43,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_po_cart'])) {
         $error_message = "Sélection de produit ou quantité invalide.";
     } else {
         try {
-            // Récupérer les informations du produit (nom et prix d'achat)
             $sql = "SELECT id, name, purchase_price FROM products WHERE id = :id LIMIT 1";
             $stmt = $pdo->prepare($sql);
             $stmt->execute([':id' => $product_id]);
@@ -63,31 +51,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_po_cart'])) {
             if (!$product) {
                 $error_message = "Produit introuvable.";
             } else {
-                // Initialiser le panier de commande si ce n'est pas déjà fait
                 if (!isset($_SESSION['po_cart'])) {
                     $_SESSION['po_cart'] = [];
                 }
 
-                // Clé unique pour chaque produit dans le panier (basée sur l'ID produit)
                 $cart_item_key = $product['id'];
 
-                // Si le produit est déjà dans le panier, augmenter la quantité
                 if (isset($_SESSION['po_cart'][$cart_item_key])) {
                     $_SESSION['po_cart'][$cart_item_key]['quantity'] += $quantity;
-                    // Recalculer line_total basé sur le prix d'achat unitaire stocké au premier ajout si vous voulez le conserver,
-                    // ou recalculer basé sur le prix D'ACHAT ACTUEL du produit si vous voulez que le prix se mette à jour.
-                    // On va conserver le prix UNITAIRE D'ACHAT du panier pour que le total ne change pas si le prix du produit est modifié
-                    // après l'ajout à la commande.
-                    $_SESSION['po_cart'][$cart_item_key]['line_total'] = $_SESSION['po_cart'][$cart_item_key]['quantity'] * $_SESSION['po_cart'][$cart_item_key]['unit_price']; // Utilise unit_price du panier PO
+                    $_SESSION['po_cart'][$cart_item_key]['line_total'] = $_SESSION['po_cart'][$cart_item_key]['quantity'] * $_SESSION['po_cart'][$cart_item_key]['unit_price'];
                     $success_message = "Quantité pour '" . htmlspecialchars($product['name']) . "' mise à jour dans la commande.";
 
                 } else {
-                    // Ajouter le produit à la commande
                     $_SESSION['po_cart'][$cart_item_key] = [
                         'product_id' => $product['id'],
                         'name' => $product['name'],
                         'quantity' => $quantity,
-                        'unit_price' => $product['purchase_price'], // Prix d'achat unitaire au moment de l'ajout
+                        'unit_price' => $product['purchase_price'],
                         'line_total' => $quantity * $product['purchase_price'],
                     ];
                      $success_message = "'" . htmlspecialchars($product['name']) . "' ajouté à la commande.";
@@ -97,51 +77,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_po_cart'])) {
             $error_message = "Erreur lors de l'ajout à la commande : " . $e->getMessage();
         }
     }
-    // Redirection post-POST pour éviter la resoumission
      header('Location: purchase_orders.php' . (!empty($success_message) ? '?success=' . urlencode($success_message) : '') . (!empty($error_message) ? '?error=' . urlencode($error_message) : ''));
      exit;
 }
 
-// --- Gérer la suppression d'un article de la commande (Panier Session) ---
+// --- Gérer la suppression d'un article de la commande (Panier Session - Code précédent ici) ---
+// ... (Conservez le bloc de code pour retirer un article tel quel) ...
 if (isset($_GET['action']) && $_GET['action'] === 'remove_po_item' && isset($_GET['product_id'])) {
      $product_id_to_remove = filter_var($_GET['product_id'], FILTER_VALIDATE_INT);
 
      if ($product_id_to_remove !== false && isset($_SESSION['po_cart'][$product_id_to_remove])) {
          $product_name = $_SESSION['po_cart'][$product_id_to_remove]['name'];
-         unset($_SESSION['po_cart'][$product_id_to_remove]); // Supprimer l'élément du tableau de session
+         unset($_SESSION['po_cart'][$product_id_to_remove]);
 
          $success_message = "'" . htmlspecialchars($product_name) . "' retiré de la commande.";
      } else {
          $error_message = "Article non trouvé dans la commande.";
      }
-     // Redirection post-GET
       header('Location: purchase_orders.php' . (!empty($success_message) ? '?success=' . urlencode($success_message) : '') . (!empty($error_message) ? '?error=' . urlencode($error_message) : ''));
      exit;
 }
 
-// --- Gérer l'annulation de la commande (vider le panier Session) ---
+// --- Gérer l'annulation de la commande (vider le panier Session - Code précédent ici) ---
+// ... (Conservez le bloc de code pour vider le panier tel quel) ...
 if (isset($_GET['action']) && $_GET['action'] === 'clear_po_cart') {
-    unset($_SESSION['po_cart']); // Supprimer la variable de session du panier commande
+    unset($_SESSION['po_cart']);
     header('Location: purchase_orders.php?success=' . urlencode("Commande annulée. La liste a été vidée."));
     exit;
 }
 
 
-// --- Gérer la soumission de la commande (Sauvegarde en Base de Données) ---
+// --- Gérer la soumission de la commande (Sauvegarde en Base de Données - Code précédent ici) ---
+// ... (Conservez le bloc de code pour la sauvegarde tel quel) ...
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_purchase_order'])) {
     $supplier_id = filter_var($_POST['supplier_id'] ?? '', FILTER_VALIDATE_INT);
     $notes = trim($_POST['notes'] ?? '');
 
-    // Vérifier si un fournisseur est sélectionné
      if ($supplier_id === false) {
          $error_message = "Veuillez sélectionner un fournisseur.";
-     }
-    // Vérifier si le panier de commande n'est pas vide
-    elseif (!isset($_SESSION['po_cart']) || empty($_SESSION['po_cart'])) {
+     } elseif (!isset($_SESSION['po_cart']) || empty($_SESSION['po_cart'])) {
         $error_message = "La commande est vide. Impossible de sauvegarder.";
     } else {
         try {
-            // Vérifier si le supplier_id existe réellement
             $sql_check_supplier = "SELECT COUNT(*) FROM suppliers WHERE id = :supplier_id";
             $stmt_check_supplier = $pdo->prepare($sql_check_supplier);
             $stmt_check_supplier->execute([':supplier_id' => $supplier_id]);
@@ -149,16 +126,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_purchase_order']
                  $error_message = "Le fournisseur sélectionné n'est pas valide.";
             } else {
 
-                 // --- Calculer le total final de la commande ---
                 $order_total_amount = 0;
                 foreach ($_SESSION['po_cart'] as $item) {
                     $order_total_amount += $item['line_total'];
                 }
 
-                // --- Démarrer une transaction ---
                 $pdo->beginTransaction();
 
-                // 1. Insérer la commande fournisseur principale
                 $sql_insert_order = "INSERT INTO purchase_orders (supplier_id, total_amount, status, user_id, notes)
                                     VALUES (:supplier_id, :total_amount, 'Pending', :user_id, :notes)";
                 $stmt_insert_order = $pdo->prepare($sql_insert_order);
@@ -169,9 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_purchase_order']
                     ':notes' => !empty($notes) ? $notes : null
                 ]);
 
-                $purchase_order_id = $pdo->lastInsertId(); // Récupérer l'ID de la commande
+                $purchase_order_id = $pdo->lastInsertId();
 
-                // 2. Insérer les articles de la commande
                 foreach ($_SESSION['po_cart'] as $item) {
                     $sql_insert_item = "INSERT INTO purchase_order_items (purchase_order_id, product_id, quantity_ordered, unit_price, line_total)
                                         VALUES (:purchase_order_id, :product_id, :quantity_ordered, :unit_price, :line_total)";
@@ -185,29 +158,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_purchase_order']
                     ]);
                 }
 
-                // --- Commit la transaction ---
                 $pdo->commit();
 
-                // --- Vider le panier et rediriger ---
                 unset($_SESSION['po_cart']);
-                // Redirection post-POST avec message de succès et ID de vente pour la facture
-                header('Location: purchase_orders?success_purchase_order_id=' . $purchase_order_id);
+                header('Location: purchase_orders.php?success_po_id=' . $purchase_order_id); // Redirection pour afficher le message avec lien
                 exit;
             }
 
 
         } catch (\PDOException $e) {
-             // --- En cas d'erreur, rollback la transaction ---
              if ($pdo->inTransaction()) {
                  $pdo->rollBack();
              }
             $error_message = "Erreur lors de la sauvegarde de la commande : " . $e->getMessage();
         }
     }
-     // Si une erreur s'est produite (fournisseur invalide, panier vide, erreur DB),
-     // on ne redirige pas, et la page s'affiche avec le message d'erreur et le panier conservé.
 }
-
 
 // --- Gérer les actions de mise à jour du statut de la commande ---
 if (isset($_GET['action'])) {
@@ -314,7 +280,8 @@ try {
 }
 
 
-// --- Calculer les totaux de la commande en cours (Panier Session) ---
+// --- Calculer les totaux de la commande en cours (Panier Session - Code précédent ici) ---
+// Ce bloc doit rester à la fin pour refléter l'état actuel du panier
 $po_cart_total = 0;
 $po_cart_items_count = 0;
 
@@ -326,10 +293,10 @@ if (isset($_SESSION['po_cart']) && is_array($_SESSION['po_cart'])) {
 }
 
 
-// --- Récupérer la liste des produits pour le select du formulaire d'ajout ---
+// --- Récupérer la liste des produits pour le select du formulaire d'ajout (Code précédent ici) ---
+// Ce bloc doit également rester à la fin
 $products_for_select = [];
 try {
-    // On peut lister tous les produits, même sans stock, pour pouvoir les commander
     $sql_products = "SELECT id, name, purchase_price FROM products ORDER BY name ASC";
     $stmt_products = $pdo->query($sql_products);
     $products_for_select = $stmt_products->fetchAll();
@@ -337,7 +304,8 @@ try {
      // Gérer l'erreur si nécessaire
 }
 
-// --- Récupérer la liste des fournisseurs pour le select ---
+// --- Récupérer la liste des fournisseurs pour le select (Code précédent ici) ---
+// Ce bloc doit également rester à la fin
 $suppliers_for_select = [];
 try {
     $sql_suppliers = "SELECT id, name FROM suppliers ORDER BY name ASC";
@@ -422,6 +390,24 @@ try {
              font-size: 1.2em;
              font-weight: bold;
          }
+         .po-status-badge {
+             /* Styles de base pour les badges de statut */
+             padding: 0.3em 0.6em;
+             font-size: 75%;
+             font-weight: 700;
+             line-height: 1;
+             text-align: center;
+             white-space: nowrap;
+             vertical-align: baseline;
+             border-radius: 0.25rem;
+             color: #fff; /* Texte blanc par défaut */
+         }
+         /* Couleurs spécifiques selon le statut */
+         .status-Pending { background-color: #ffc107; color: #212529; } /* warning */
+         .status-Sent { background-color: #17a2b8; } /* info */
+         .status-Received { background-color: #28a745; } /* success */
+         .status-Cancelled { background-color: #dc3545; } /* danger */
+
     </style>
 </head>
 <body>
@@ -623,14 +609,14 @@ try {
                                   <td><span class="po-status-badge status-<?php echo htmlspecialchars($po['status']); ?>"><?php echo htmlspecialchars($po['status']); ?></span></td>
                                  <td><?php echo htmlspecialchars($po['creator_name'] ?? 'N/A'); ?></td>
                                  <td>
-                                      <a href="generate_po_pdf.php?purchase_order_id=<?php echo $po['id']; ?>" target="_blank" class="btn btn-sm btn-info me-1" title="Générer PDF"><i class="fas fa-file-pdf"></i></a>
+                                      <a href="generate_po_pdf.php?po_id=<?php echo $po['id']; ?>" target="_blank" class="btn btn-sm btn-info me-1" title="Générer PDF"><i class="fas fa-file-pdf"></i></a>
                                       <!-- Actions de statut - affichées conditionnellement -->
                                       <?php if ($po['status'] === 'Pending'): ?>
                                            <a href="purchase_orders.php?action=mark_as_sent&id=<?php echo $po['id']; ?>" class="btn btn-sm btn-secondary me-1" title="Marquer comme Envoyée" onclick="return confirm('Marquer la commande N°<?php echo $po['id']; ?> comme Envoyée ?');"><i class="fas fa-paper-plane"></i></a>
                                             <a href="purchase_orders.php?action=mark_as_cancelled&id=<?php echo $po['id']; ?>" class="btn btn-sm btn-danger me-1" title="Annuler" onclick="return confirm('Annuler la commande N°<?php echo $po['id']; ?> ?');"><i class="fas fa-times-circle"></i></a>
                                       <?php elseif ($po['status'] === 'Sent'): ?>
                                            <!-- Lien/bouton pour INITIER la réception de stock -->
-                                            <a href="receive_po.php?action=receive_stock&id=<?php echo $po['id']; ?>" class="btn btn-sm btn-success me-1" title="Recevoir le Stock"><i class="fas fa-truck-loading"></i></a>
+                                            <a href="purchase_orders.php?action=receive_stock&id=<?php echo $po['id']; ?>" class="btn btn-sm btn-success me-1" title="Recevoir le Stock"><i class="fas fa-truck-loading"></i></a>
                                             <a href="purchase_orders.php?action=mark_as_cancelled&id=<?php echo $po['id']; ?>" class="btn btn-sm btn-danger me-1" title="Annuler" onclick="return confirm('Annuler la commande N°<?php echo $po['id']; ?> ?');"><i class="fas fa-times-circle"></i></a>
                                       <?php elseif ($po['status'] === 'Received'): ?>
                                            <!-- Pas d'actions de statut supplémentaires pour 'Received' -->

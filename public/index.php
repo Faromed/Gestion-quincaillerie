@@ -150,6 +150,9 @@ if ($low_stock_products_count > 0) { // Charger les détails seulement s'il y en
             <li class="nav-item">
                 <a class="nav-link" href="suppliers.php"><i class="fas fa-truck me-2"></i> Fournisseurs</a> </li>
              <li class="nav-item">
+             <li class="nav-item">
+                <a class="nav-link" href="purchase_orders.php"><i class="fas fa-truck me-2"></i> Commandes Fournisseurs</a> <!-- Lien actif -->
+            </li>
                 <a class="nav-link" href="sales.php"><i class="fas fa-cash-register me-2"></i> Ventes</a> </li>
             <li class="nav-item">
                 <a class="nav-link" href="stock_movements.php"><i class="fas fa-boxes me-2"></i> Stock</a> </li>
